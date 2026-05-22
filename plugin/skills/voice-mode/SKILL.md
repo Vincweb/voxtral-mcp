@@ -1,6 +1,6 @@
 ---
 name: voice-mode
-description: "Spoken responses via Mistral Voxtral 4B (local, MLX, more natural voice but ~3 GB RAM and ~2 s TTFA). Activate by saying \"use voxtral\", \"utilise voxtral\", \"parle avec voxtral\", or invoking /voxtral:voice-mode. For the snappier default voice setup, see pocket-tts-mcp."
+description: "Spoken responses via Mistral Voxtral 4B (local MLX, natural voice, ~3 GB RAM, ~2 s TTFA). Activate by saying \"parle-moi\", \"voice mode\", \"active le mode vocal\", \"réponds-moi à l'oral\", or invoking /voxtral:voice-mode."
 ---
 
 # Voice Mode — Mistral Voxtral
