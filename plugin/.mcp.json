@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "voxtral": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "voxtral-mcp"
+      ],
+      "env": {
+        "VOXTRAL_MODEL": "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit"
+      }
+    }
+  }
+}

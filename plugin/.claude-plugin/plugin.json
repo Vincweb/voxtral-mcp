@@ -1,0 +1,10 @@
+{
+  "name": "voxtral",
+  "description": "Local voice for Claude Code via Mistral Voxtral 4B TTS (MLX 4-bit, Apple Silicon). Higher quality than pocket-tts. Bundles a speak() MCP tool and a /voice-mode skill.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Vincent Caudron",
+    "url": "https://github.com/Vincweb"
+  },
+  "homepage": "https://github.com/Vincweb/voxtral-mcp"
+}
