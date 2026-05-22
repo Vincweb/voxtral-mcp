@@ -119,7 +119,12 @@ def _generate_wav(text: str, voice: str | None) -> tuple[str, dict]:
         raise RuntimeError("voxtral returned no audio chunks")
     audio_arr = None
     for c in chunks:
-        a = getattr(c, "audio", None) or getattr(c, "samples", None)
+        # Explicit `is None` checks — `a or b` would try to bool-eval an
+        # ndarray/mx.array, which raises "Only length-1 arrays can be
+        # converted to Python scalars".
+        a = getattr(c, "audio", None)
+        if a is None:
+            a = getattr(c, "samples", None)
         if a is None:
             continue
         if isinstance(a, mx.array):
