@@ -7,3 +7,8 @@ dist/
 build/
 .DS_Store
 .python-version
+
+# Local notes — not for public distribution
+ROADMAP.md
+NOTES.md
+TODO.md
