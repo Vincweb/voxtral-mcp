@@ -35,11 +35,16 @@ _audio_chunks: deque = deque()
 _remainder: np.ndarray | None = None  # carry-over between callback invocations
 _stream: sd.OutputStream | None = None
 _stream_lock = threading.Lock()
-# Apply a short fade-in the first time we emit audio after a silent period
-# (stream just opened, or buffer ran dry). Prevents the click at the
-# silence→audio transition.
+# Apply a fade-in the first time we emit audio after a silent period
+# (stream just opened, or buffer ran dry). Masks both the silence→audio
+# click and any short codec warm-up artifacts from the neural decoder.
 _fade_in_pending = True
-FADE_IN_SAMPLES = 240  # 10 ms at 24 kHz
+FADE_IN_SAMPLES = 1920  # 80 ms at 24 kHz — long enough to hide the decoder's startup transient
+
+# Trim a few ms from the very first chunk of each speak() request. Voxtral's
+# neural audio decoder produces a short noisy transient at the very start of
+# a fresh generation that the fade-in alone doesn't fully mask.
+FIRST_CHUNK_TRIM_SAMPLES = 720  # 30 ms at 24 kHz
 
 # Generation queue (FIFO of speak requests).
 _gen_queue: "deque[tuple[str, str | None]]" = deque()
@@ -169,7 +174,13 @@ def _generation_loop() -> None:
                     audio = getattr(chunk, "samples", None)
                 if audio is None:
                     continue
-                _audio_chunks.append(_to_float32(audio))
+                arr = _to_float32(audio)
+                if first_chunk and arr.size > FIRST_CHUNK_TRIM_SAMPLES * 2:
+                    # Strip the decoder warm-up transient from the very first
+                    # chunk. Without this, even with the 80 ms fade-in there's
+                    # an audible crackle.
+                    arr = arr[FIRST_CHUNK_TRIM_SAMPLES:]
+                _audio_chunks.append(arr)
                 if first_chunk:
                     # Open the OutputStream only AFTER at least one chunk is
                     # in the deque. This avoids the ~2 s of pure silence the

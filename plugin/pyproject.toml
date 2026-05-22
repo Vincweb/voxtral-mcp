@@ -1,6 +1,6 @@
 [project]
 name = "voxtral-mcp"
-version = "0.3.1"
+version = "0.3.2"
 description = "MCP server wrapping Mistral Voxtral 4B TTS (via mlx-audio) for Claude Code on Apple Silicon"
 requires-python = ">=3.10,<3.14"
 dependencies = [
