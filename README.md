@@ -28,7 +28,39 @@ at the cost of a larger model and slower TTFA.
 - [uv](https://docs.astral.sh/uv/) — install with `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - Claude Code (CLI, desktop app, or Cursor extension)
 
-## Install — option A: Claude Code plugin (recommended)
+## Install
+
+### Option A — standalone MCP (works with any MCP client)
+
+This is the universal path: a regular MCP server you wire into any client
+that speaks the Model Context Protocol (Claude Desktop, Claude Code CLI,
+Cursor's Claude Code extension, etc.).
+
+```bash
+git clone https://github.com/Vincweb/voxtral-mcp.git
+cd voxtral-mcp/plugin
+./install.sh
+```
+
+The script `uv sync`'s the venv (≈500 MB with mlx-audio + transformers +
+mistral-common) and prints the `.mcp.json` snippet to paste into your
+project (or `~/.claude.json` for a global install).
+
+If you want the bundled `/voice-mode` skill (only relevant in Claude
+Code / Cursor), also copy it:
+
+```bash
+mkdir -p ~/.claude/skills/voice-mode
+cp plugin/skills/voice-mode/SKILL.md ~/.claude/skills/voice-mode/SKILL.md
+```
+
+Then restart your MCP client.
+
+### Option B — Claude Code plugin (recommended if you use Claude Code or Cursor)
+
+If you're already on Claude Code (CLI, desktop, or the Cursor extension),
+the plugin path bundles the MCP server, the `/voice-mode` skill, and the
+wiring in one step:
 
 ```
 /plugin marketplace add Vincweb/voxtral-mcp
@@ -39,18 +71,10 @@ Restart Claude Code. On first use, `uv run` materializes the Python venv
 (~30 s) and Voxtral's 4-bit model downloads from Hugging Face (~2.5 GB,
 once). Subsequent runs are instant.
 
-## Install — option B: standalone
-
-```bash
-git clone https://github.com/Vincweb/voxtral-mcp.git
-cd voxtral-mcp/plugin
-./install.sh
-```
-
-The script `uv sync`'s the venv (≈500 MB with mlx-audio + transformers +
-mistral-common) and prints the `.mcp.json` snippet to paste into your
-project. You'll also need to copy `plugin/skills/voice-mode/SKILL.md` to
-`~/.claude/skills/voice-mode/SKILL.md`.
+> 💡 The plugin layer is a Claude Code feature; Cursor inherits it because
+> it ships the Claude Code CLI. Claude Desktop (the native app) and
+> non-Claude MCP clients don't expose `/plugin install` — use Option A
+> there.
 
 ## Use
 
