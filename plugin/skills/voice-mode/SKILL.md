@@ -1,9 +1,9 @@
 ---
 name: voice-mode
-description: "Use when the user wants spoken responses for the rest of the conversation. Activate via /voice-mode. Examples: \"parle-moi\", \"active le mode vocal\", \"réponds-moi à l'oral\", \"voice mode\"."
+description: "Spoken responses via Mistral Voxtral 4B (local, MLX, more natural voice but ~3 GB RAM and ~2 s TTFA). Activate by saying \"use voxtral\", \"utilise voxtral\", \"parle avec voxtral\", or invoking /voxtral:voice-mode. For the snappier default voice setup, see pocket-tts-mcp."
 ---
 
-# Voice Mode (Voxtral)
+# Voice Mode — Mistral Voxtral
 
 Activates **voice-first replies** for the remainder of this conversation. From the moment this skill is invoked until the user explicitly disables it, you must speak a short version of each response aloud via the `mcp__voxtral__speak` tool, in addition to your normal text reply.
 
