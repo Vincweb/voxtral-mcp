@@ -1,45 +1,47 @@
 """MCP server wrapping Mistral Voxtral 4B TTS via mlx-audio.
 
 The model loads in-process on first speak() call (~3-5 s) and stays in RAM.
-Generation streams: chunks of ~2 s audio are written to disk and queued for
-playback as soon as they're produced, so the first audio plays in ~2-3 s
-even for long texts.
+Generation streams: chunks of ~2 s audio are produced by the model and
+fed directly into a continuous CoreAudio output stream via `sounddevice`
+— no temp WAV files, no per-chunk `afplay` spawning, no gaps between
+chunks. First audio is audible in ~2-3 s even for long texts.
 """
 import atexit
 import os
-import queue
-import subprocess
-import tempfile
 import threading
+from collections import deque
 from typing import Any
 
 import numpy as np
-import soundfile as sf
+import sounddevice as sd
 from mcp.server.fastmcp import FastMCP
 
 MODEL_ID = os.environ.get("VOXTRAL_MODEL", "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit")
 STREAMING_INTERVAL = float(os.environ.get("VOXTRAL_STREAMING_INTERVAL", "2.0"))
 MAX_TOKENS = int(os.environ.get("VOXTRAL_MAX_TOKENS", "4096"))
+SAMPLE_RATE = int(os.environ.get("VOXTRAL_SAMPLE_RATE", "24000"))
 
 mcp = FastMCP("voxtral")
 
-# Lazy-loaded TTS model.
 _model: Any = None
 _model_lock = threading.Lock()
 _model_load_error: str | None = None
 
-# Playback queue: chunks of generated audio. Player thread plays them in order.
-_play_queue: "queue.Queue[str | None]" = queue.Queue()
-_player_thread: threading.Thread | None = None
-_player_lock = threading.Lock()
-_current_play_proc: subprocess.Popen | None = None
+# Continuous-playback architecture: the generation thread appends numpy
+# chunks (float32) to a deque; the sounddevice OutputStream callback drains
+# the deque sample-by-sample to fill the soundcard buffer, with no gaps
+# between chunks.
+_audio_chunks: deque = deque()
+_remainder: np.ndarray | None = None  # carry-over between callback invocations
+_stream: sd.OutputStream | None = None
+_stream_lock = threading.Lock()
 
-# Generation queue: pending speak() requests. Worker thread generates them
-# sequentially (mlx is single-threaded on the GPU anyway).
-_gen_queue: "queue.Queue[tuple[str, str | None] | None]" = queue.Queue()
+# Generation queue (FIFO of speak requests).
+_gen_queue: "deque[tuple[str, str | None]]" = deque()
+_gen_event = threading.Event()  # signals new requests
 _gen_thread: threading.Thread | None = None
 _cancel_event = threading.Event()
-_gen_in_flight = threading.Event()  # set while a generation is actively producing chunks
+_gen_in_flight = threading.Event()
 
 _last_error: str | None = None
 
@@ -58,27 +60,83 @@ def _ensure_model() -> Any:
             raise
 
 
-def _write_chunk_wav(audio: Any, sample_rate: int) -> str:
+def _audio_callback(outdata: np.ndarray, frames: int, _time, _status) -> None:
+    global _remainder
+    pos = 0
+    while pos < frames:
+        if _remainder is None or _remainder.size == 0:
+            try:
+                _remainder = _audio_chunks.popleft()
+            except IndexError:
+                outdata[pos:, 0] = 0.0
+                return
+        take = min(frames - pos, _remainder.size)
+        outdata[pos:pos + take, 0] = _remainder[:take]
+        _remainder = _remainder[take:] if take < _remainder.size else None
+        pos += take
+
+
+def _ensure_stream() -> None:
+    global _stream
+    with _stream_lock:
+        if _stream is None or _stream.closed:
+            _stream = sd.OutputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="float32",
+                callback=_audio_callback,
+            )
+            _stream.start()
+
+
+def _close_stream() -> None:
+    global _stream
+    with _stream_lock:
+        if _stream is not None and not _stream.closed:
+            try:
+                _stream.stop()
+                _stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+            _stream = None
+
+
+def _clear_audio() -> int:
+    global _remainder
+    n = len(_audio_chunks)
+    _audio_chunks.clear()
+    _remainder = None
+    return n
+
+
+def _to_float32(audio: Any) -> np.ndarray:
     import mlx.core as mx
     if isinstance(audio, mx.array):
         audio = np.array(audio)
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        wav_path = f.name
-    sf.write(wav_path, audio, sample_rate)
-    return wav_path
+    arr = np.asarray(audio).astype(np.float32, copy=False)
+    if arr.ndim > 1:
+        arr = arr.squeeze()
+    return arr
 
 
 def _generation_loop() -> None:
     global _last_error
     while True:
-        req = _gen_queue.get()
+        _gen_event.wait()
+        try:
+            req = _gen_queue.popleft()
+        except IndexError:
+            _gen_event.clear()
+            continue
         if req is None:
             return
+
         text, voice = req
         _cancel_event.clear()
         _gen_in_flight.set()
         try:
             model = _ensure_model()
+            _ensure_stream()
             kwargs: dict[str, Any] = {
                 "text": text,
                 "stream": True,
@@ -95,85 +153,24 @@ def _generation_loop() -> None:
                     audio = getattr(chunk, "samples", None)
                 if audio is None:
                     continue
-                sr = getattr(chunk, "sample_rate", 24000)
-                if isinstance(sr, str):
-                    sr = int(sr)
-                wav_path = _write_chunk_wav(audio, sr)
-                _play_queue.put(wav_path)
+                _audio_chunks.append(_to_float32(audio))
         except Exception as e:  # noqa: BLE001
             _last_error = f"generation: {type(e).__name__}: {e}"
         finally:
             _gen_in_flight.clear()
 
 
-def _player_loop() -> None:
-    global _current_play_proc, _last_error
-    while True:
-        wav_path = _play_queue.get()
-        if wav_path is None:
-            return
-        try:
-            with _player_lock:
-                _current_play_proc = subprocess.Popen(["afplay", wav_path])
-            ret = _current_play_proc.wait()
-            with _player_lock:
-                _current_play_proc = None
-            if ret not in (0, -15):  # -15 = SIGTERM from stop_speaking
-                _last_error = f"afplay exited {ret} for {wav_path}"
-        except Exception as e:  # noqa: BLE001
-            _last_error = f"player thread error: {e}"
-        finally:
-            try:
-                os.unlink(wav_path)
-            except OSError:
-                pass
-
-
-def _ensure_threads() -> None:
-    global _player_thread, _gen_thread
-    if _player_thread is None or not _player_thread.is_alive():
-        _player_thread = threading.Thread(target=_player_loop, daemon=True)
-        _player_thread.start()
+def _ensure_gen_thread() -> None:
+    global _gen_thread
     if _gen_thread is None or not _gen_thread.is_alive():
         _gen_thread = threading.Thread(target=_generation_loop, daemon=True)
         _gen_thread.start()
 
 
-def _drain_play_queue() -> int:
-    dropped = 0
-    while True:
-        try:
-            wav = _play_queue.get_nowait()
-        except queue.Empty:
-            return dropped
-        if wav is None:
-            continue
-        try:
-            os.unlink(wav)
-        except OSError:
-            pass
-        dropped += 1
-
-
-def _drain_gen_queue() -> int:
-    dropped = 0
-    while True:
-        try:
-            req = _gen_queue.get_nowait()
-        except queue.Empty:
-            return dropped
-        if req is None:
-            continue
-        dropped += 1
-
-
 def _cleanup() -> None:
     _cancel_event.set()
-    with _player_lock:
-        if _current_play_proc and _current_play_proc.poll() is None:
-            _current_play_proc.terminate()
-    _drain_play_queue()
-    _drain_gen_queue()
+    _clear_audio()
+    _close_stream()
 
 
 atexit.register(_cleanup)
@@ -185,8 +182,9 @@ def speak(text: str, voice: str | None = None) -> str:
 
     Returns immediately. The text is queued for streaming generation in a
     background thread, which emits chunks of ~2 s audio that play through
-    `afplay` as soon as they're produced. First audio is audible in ~2-3 s
-    even for long texts. Multiple speak() calls queue and play sequentially.
+    a continuous sounddevice OutputStream — no gaps between chunks.
+    First audio is audible in ~2-3 s even for long texts. Multiple speak()
+    calls queue and play sequentially.
 
     Use `stop_speaking()` at the start of a new conversational turn to drop
     any audio still playing/queued from the previous turn AND cancel any
@@ -199,11 +197,12 @@ def speak(text: str, voice: str | None = None) -> str:
                "casual_male", "neutral_female"). Defaults to the model's
                built-in voice.
     """
-    _ensure_threads()
-    _gen_queue.put((text, voice))
+    _ensure_gen_thread()
+    _gen_queue.append((text, voice))
+    _gen_event.set()
     return (
         f"enqueued {len(text)} chars (voice={voice or 'default'}, "
-        f"gen_pending={_gen_queue.qsize()}, play_queue={_play_queue.qsize()})"
+        f"gen_pending={len(_gen_queue)}, audio_buffer_chunks={len(_audio_chunks)})"
     )
 
 
@@ -216,38 +215,32 @@ def stop_speaking() -> str:
     turn's audio doesn't bleed into the new one.
     """
     _cancel_event.set()
-    with _player_lock:
-        killed = (
-            _current_play_proc is not None
-            and _current_play_proc.poll() is None
-        )
-        if killed:
-            _current_play_proc.terminate()
-    dropped_play = _drain_play_queue()
-    dropped_gen = _drain_gen_queue()
+    # Drain pending generation requests.
+    dropped_gen = len(_gen_queue)
+    _gen_queue.clear()
+    # Drain audio buffer (mid-flight chunks already produced).
+    dropped_audio = _clear_audio()
     return (
-        f"cancelled generation, dropped {dropped_play} audio chunks "
-        f"+ {dropped_gen} pending requests, {'killed' if killed else 'no'} current playback"
+        f"cancelled generation, dropped {dropped_audio} audio chunks "
+        f"+ {dropped_gen} pending requests"
     )
 
 
 @mcp.tool()
 def status() -> dict:
     """Report model load state, queue depths, and last error."""
-    with _player_lock:
-        playing = (
-            _current_play_proc is not None
-            and _current_play_proc.poll() is None
-        )
+    with _stream_lock:
+        stream_active = _stream is not None and not _stream.closed
     return {
         "model_id": MODEL_ID,
         "model_loaded": _model is not None,
         "model_load_error": _model_load_error,
         "streaming_interval_seconds": STREAMING_INTERVAL,
-        "gen_pending": _gen_queue.qsize(),
+        "sample_rate": SAMPLE_RATE,
+        "gen_pending": len(_gen_queue),
         "gen_in_flight": _gen_in_flight.is_set(),
-        "play_queue_depth": _play_queue.qsize(),
-        "currently_playing": playing,
+        "audio_buffer_chunks": len(_audio_chunks),
+        "stream_active": stream_active,
         "last_error": _last_error,
     }
 

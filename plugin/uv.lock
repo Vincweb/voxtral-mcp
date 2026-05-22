@@ -1909,7 +1909,7 @@ wheels = [
 
 [[package]]
 name = "voxtral-mcp"
-version = "0.1.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
@@ -1918,7 +1918,7 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and python_full_version < '3.13'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
-    { name = "soundfile" },
+    { name = "sounddevice" },
 ]
 
 [package.metadata]
@@ -1927,5 +1927,5 @@ requires-dist = [
     { name = "mistral-common", extras = ["audio"], specifier = ">=1.5" },
     { name = "mlx-audio", specifier = ">=0.1" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "soundfile", specifier = ">=0.12" },
+    { name = "sounddevice", specifier = ">=0.5" },
 ]
