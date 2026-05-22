@@ -2,14 +2,14 @@
 
 The model loads in-process on first speak() call (~3-5 s) and stays in RAM.
 Generation streams: chunks of ~2 s audio are produced by the model and
-fed directly into a continuous CoreAudio output stream via `sounddevice`
-— no temp WAV files, no per-chunk `afplay` spawning, no gaps between
-chunks. First audio is audible in ~2-3 s even for long texts.
+fed into a sounddevice OutputStream in *write mode* (no PortAudio
+callback, so no GIL/real-time contention) — yielding clean, gap-free
+playback from the first sample.
 """
 import atexit
 import os
+import queue
 import threading
-from collections import deque
 from typing import Any
 
 import numpy as np
@@ -27,28 +27,16 @@ _model: Any = None
 _model_lock = threading.Lock()
 _model_load_error: str | None = None
 
-# Continuous-playback architecture: the generation thread appends numpy
-# chunks (float32) to a deque; the sounddevice OutputStream callback drains
-# the deque sample-by-sample to fill the soundcard buffer, with no gaps
-# between chunks.
-_audio_chunks: deque = deque()
-_remainder: np.ndarray | None = None  # carry-over between callback invocations
+# Audio queue: generation thread puts numpy chunks, writer thread pulls
+# and calls _stream.write() in blocking mode. PortAudio's internal buffer
+# handles all real-time concerns — Python never runs in the audio thread.
+_audio_q: "queue.Queue[np.ndarray | None]" = queue.Queue()
+_writer_thread: threading.Thread | None = None
 _stream: sd.OutputStream | None = None
 _stream_lock = threading.Lock()
-# Apply a fade-in the first time we emit audio after a silent period
-# (stream just opened, or buffer ran dry). Masks both the silence→audio
-# click and any short codec warm-up artifacts from the neural decoder.
-_fade_in_pending = True
-FADE_IN_SAMPLES = 1920  # 80 ms at 24 kHz — long enough to hide the decoder's startup transient
-
-# Trim a few ms from the very first chunk of each speak() request. Voxtral's
-# neural audio decoder produces a short noisy transient at the very start of
-# a fresh generation that the fade-in alone doesn't fully mask.
-FIRST_CHUNK_TRIM_SAMPLES = 720  # 30 ms at 24 kHz
 
 # Generation queue (FIFO of speak requests).
-_gen_queue: "deque[tuple[str, str | None]]" = deque()
-_gen_event = threading.Event()  # signals new requests
+_gen_q: "queue.Queue[tuple[str, str | None] | None]" = queue.Queue()
 _gen_thread: threading.Thread | None = None
 _cancel_event = threading.Event()
 _gen_in_flight = threading.Event()
@@ -70,32 +58,6 @@ def _ensure_model() -> Any:
             raise
 
 
-def _audio_callback(outdata: np.ndarray, frames: int, _time, _status) -> None:
-    global _remainder, _fade_in_pending
-    pos = 0
-    while pos < frames:
-        if _remainder is None or _remainder.size == 0:
-            try:
-                _remainder = _audio_chunks.popleft()
-            except IndexError:
-                outdata[pos:, 0] = 0.0
-                _fade_in_pending = True  # next non-silent emit gets a fade-in
-                return
-            if _fade_in_pending:
-                # Linear fade-in over FADE_IN_SAMPLES samples to avoid a click
-                # at the silence→audio boundary. Copy the chunk first so we
-                # don't mutate something held elsewhere.
-                _remainder = _remainder.copy()
-                fade_n = min(FADE_IN_SAMPLES, _remainder.size)
-                fade = np.linspace(0.0, 1.0, fade_n, dtype=_remainder.dtype)
-                _remainder[:fade_n] *= fade
-                _fade_in_pending = False
-        take = min(frames - pos, _remainder.size)
-        outdata[pos:pos + take, 0] = _remainder[:take]
-        _remainder = _remainder[take:] if take < _remainder.size else None
-        pos += take
-
-
 def _ensure_stream() -> None:
     global _stream
     with _stream_lock:
@@ -104,8 +66,9 @@ def _ensure_stream() -> None:
                 samplerate=SAMPLE_RATE,
                 channels=1,
                 dtype="float32",
-                callback=_audio_callback,
             )
+            _stream.start()
+        elif _stream.stopped:
             _stream.start()
 
 
@@ -114,20 +77,35 @@ def _close_stream() -> None:
     with _stream_lock:
         if _stream is not None and not _stream.closed:
             try:
-                _stream.stop()
+                _stream.abort()
                 _stream.close()
             except Exception:  # noqa: BLE001
                 pass
             _stream = None
 
 
-def _clear_audio() -> int:
-    global _remainder, _fade_in_pending
-    n = len(_audio_chunks)
-    _audio_chunks.clear()
-    _remainder = None
-    _fade_in_pending = True
-    return n
+def _writer_loop() -> None:
+    global _last_error
+    while True:
+        chunk = _audio_q.get()
+        if chunk is None:
+            return
+        if _cancel_event.is_set():
+            continue  # drop the chunk — we're aborting
+        try:
+            stream = _stream
+            if stream is None or stream.closed:
+                continue
+            stream.write(chunk)  # blocks until PortAudio has room
+        except Exception as e:  # noqa: BLE001
+            _last_error = f"writer: {type(e).__name__}: {e}"
+
+
+def _ensure_writer() -> None:
+    global _writer_thread
+    if _writer_thread is None or not _writer_thread.is_alive():
+        _writer_thread = threading.Thread(target=_writer_loop, daemon=True)
+        _writer_thread.start()
 
 
 def _to_float32(audio: Any) -> np.ndarray:
@@ -143,15 +121,9 @@ def _to_float32(audio: Any) -> np.ndarray:
 def _generation_loop() -> None:
     global _last_error
     while True:
-        _gen_event.wait()
-        try:
-            req = _gen_queue.popleft()
-        except IndexError:
-            _gen_event.clear()
-            continue
+        req = _gen_q.get()
         if req is None:
             return
-
         text, voice = req
         _cancel_event.clear()
         _gen_in_flight.set()
@@ -165,7 +137,7 @@ def _generation_loop() -> None:
             }
             if voice:
                 kwargs["voice"] = voice
-            first_chunk = True
+            opened_stream = False
             for chunk in model.generate(**kwargs):
                 if _cancel_event.is_set():
                     break
@@ -174,21 +146,11 @@ def _generation_loop() -> None:
                     audio = getattr(chunk, "samples", None)
                 if audio is None:
                     continue
-                arr = _to_float32(audio)
-                if first_chunk and arr.size > FIRST_CHUNK_TRIM_SAMPLES * 2:
-                    # Strip the decoder warm-up transient from the very first
-                    # chunk. Without this, even with the 80 ms fade-in there's
-                    # an audible crackle.
-                    arr = arr[FIRST_CHUNK_TRIM_SAMPLES:]
-                _audio_chunks.append(arr)
-                if first_chunk:
-                    # Open the OutputStream only AFTER at least one chunk is
-                    # in the deque. This avoids the ~2 s of pure silence the
-                    # callback would otherwise produce while waiting for the
-                    # first sample, which created an audible click on the
-                    # silence→audio transition.
+                if not opened_stream:
                     _ensure_stream()
-                    first_chunk = False
+                    _ensure_writer()
+                    opened_stream = True
+                _audio_q.put(_to_float32(audio))
         except Exception as e:  # noqa: BLE001
             _last_error = f"generation: {type(e).__name__}: {e}"
         finally:
@@ -202,9 +164,34 @@ def _ensure_gen_thread() -> None:
         _gen_thread.start()
 
 
+def _drain_audio_q() -> int:
+    dropped = 0
+    while True:
+        try:
+            x = _audio_q.get_nowait()
+        except queue.Empty:
+            return dropped
+        if x is None:
+            continue
+        dropped += 1
+
+
+def _drain_gen_q() -> int:
+    dropped = 0
+    while True:
+        try:
+            x = _gen_q.get_nowait()
+        except queue.Empty:
+            return dropped
+        if x is None:
+            continue
+        dropped += 1
+
+
 def _cleanup() -> None:
     _cancel_event.set()
-    _clear_audio()
+    _drain_audio_q()
+    _drain_gen_q()
     _close_stream()
 
 
@@ -216,8 +203,11 @@ def speak(text: str, voice: str | None = None) -> str:
     """Speak text aloud through Mistral Voxtral 4B TTS (local, Apple Silicon MLX).
 
     Returns immediately. The text is queued for streaming generation in a
-    background thread, which emits chunks of ~2 s audio that play through
-    a continuous sounddevice OutputStream — no gaps between chunks.
+    background thread, which emits chunks of ~2 s audio. A writer thread
+    feeds each chunk into a continuous sounddevice OutputStream in blocking
+    write mode — no PortAudio callback, so Python never runs in the audio
+    realtime thread, and playback is gap-free and crackle-free.
+
     First audio is audible in ~2-3 s even for long texts. Multiple speak()
     calls queue and play sequentially.
 
@@ -233,11 +223,10 @@ def speak(text: str, voice: str | None = None) -> str:
                built-in voice.
     """
     _ensure_gen_thread()
-    _gen_queue.append((text, voice))
-    _gen_event.set()
+    _gen_q.put((text, voice))
     return (
         f"enqueued {len(text)} chars (voice={voice or 'default'}, "
-        f"gen_pending={len(_gen_queue)}, audio_buffer_chunks={len(_audio_chunks)})"
+        f"gen_pending={_gen_q.qsize()}, audio_buffer={_audio_q.qsize()})"
     )
 
 
@@ -250,14 +239,20 @@ def stop_speaking() -> str:
     turn's audio doesn't bleed into the new one.
     """
     _cancel_event.set()
-    # Drain pending generation requests.
-    dropped_gen = len(_gen_queue)
-    _gen_queue.clear()
-    # Drain audio buffer (mid-flight chunks already produced).
-    dropped_audio = _clear_audio()
+    dropped_gen = _drain_gen_q()
+    dropped_audio = _drain_audio_q()
+    # Discard PortAudio's internal buffer (sample data already handed off
+    # to the soundcard but not yet played). abort() requires a restart of
+    # the stream — _ensure_stream() will do that on the next speak().
+    with _stream_lock:
+        if _stream is not None and not _stream.closed:
+            try:
+                _stream.abort()
+            except Exception:  # noqa: BLE001
+                pass
     return (
         f"cancelled generation, dropped {dropped_audio} audio chunks "
-        f"+ {dropped_gen} pending requests"
+        f"+ {dropped_gen} pending requests, aborted current playback"
     )
 
 
@@ -265,16 +260,20 @@ def stop_speaking() -> str:
 def status() -> dict:
     """Report model load state, queue depths, and last error."""
     with _stream_lock:
-        stream_active = _stream is not None and not _stream.closed
+        stream_active = (
+            _stream is not None
+            and not _stream.closed
+            and not _stream.stopped
+        )
     return {
         "model_id": MODEL_ID,
         "model_loaded": _model is not None,
         "model_load_error": _model_load_error,
         "streaming_interval_seconds": STREAMING_INTERVAL,
         "sample_rate": SAMPLE_RATE,
-        "gen_pending": len(_gen_queue),
+        "gen_pending": _gen_q.qsize(),
         "gen_in_flight": _gen_in_flight.is_set(),
-        "audio_buffer_chunks": len(_audio_chunks),
+        "audio_buffer": _audio_q.qsize(),
         "stream_active": stream_active,
         "last_error": _last_error,
     }
