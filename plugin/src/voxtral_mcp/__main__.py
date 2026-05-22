@@ -35,6 +35,11 @@ _audio_chunks: deque = deque()
 _remainder: np.ndarray | None = None  # carry-over between callback invocations
 _stream: sd.OutputStream | None = None
 _stream_lock = threading.Lock()
+# Apply a short fade-in the first time we emit audio after a silent period
+# (stream just opened, or buffer ran dry). Prevents the click at the
+# silence→audio transition.
+_fade_in_pending = True
+FADE_IN_SAMPLES = 240  # 10 ms at 24 kHz
 
 # Generation queue (FIFO of speak requests).
 _gen_queue: "deque[tuple[str, str | None]]" = deque()
@@ -61,7 +66,7 @@ def _ensure_model() -> Any:
 
 
 def _audio_callback(outdata: np.ndarray, frames: int, _time, _status) -> None:
-    global _remainder
+    global _remainder, _fade_in_pending
     pos = 0
     while pos < frames:
         if _remainder is None or _remainder.size == 0:
@@ -69,7 +74,17 @@ def _audio_callback(outdata: np.ndarray, frames: int, _time, _status) -> None:
                 _remainder = _audio_chunks.popleft()
             except IndexError:
                 outdata[pos:, 0] = 0.0
+                _fade_in_pending = True  # next non-silent emit gets a fade-in
                 return
+            if _fade_in_pending:
+                # Linear fade-in over FADE_IN_SAMPLES samples to avoid a click
+                # at the silence→audio boundary. Copy the chunk first so we
+                # don't mutate something held elsewhere.
+                _remainder = _remainder.copy()
+                fade_n = min(FADE_IN_SAMPLES, _remainder.size)
+                fade = np.linspace(0.0, 1.0, fade_n, dtype=_remainder.dtype)
+                _remainder[:fade_n] *= fade
+                _fade_in_pending = False
         take = min(frames - pos, _remainder.size)
         outdata[pos:pos + take, 0] = _remainder[:take]
         _remainder = _remainder[take:] if take < _remainder.size else None
@@ -102,10 +117,11 @@ def _close_stream() -> None:
 
 
 def _clear_audio() -> int:
-    global _remainder
+    global _remainder, _fade_in_pending
     n = len(_audio_chunks)
     _audio_chunks.clear()
     _remainder = None
+    _fade_in_pending = True
     return n
 
 
@@ -136,7 +152,6 @@ def _generation_loop() -> None:
         _gen_in_flight.set()
         try:
             model = _ensure_model()
-            _ensure_stream()
             kwargs: dict[str, Any] = {
                 "text": text,
                 "stream": True,
@@ -145,6 +160,7 @@ def _generation_loop() -> None:
             }
             if voice:
                 kwargs["voice"] = voice
+            first_chunk = True
             for chunk in model.generate(**kwargs):
                 if _cancel_event.is_set():
                     break
@@ -154,6 +170,14 @@ def _generation_loop() -> None:
                 if audio is None:
                     continue
                 _audio_chunks.append(_to_float32(audio))
+                if first_chunk:
+                    # Open the OutputStream only AFTER at least one chunk is
+                    # in the deque. This avoids the ~2 s of pure silence the
+                    # callback would otherwise produce while waiting for the
+                    # first sample, which created an audible click on the
+                    # silence→audio transition.
+                    _ensure_stream()
+                    first_chunk = False
         except Exception as e:  # noqa: BLE001
             _last_error = f"generation: {type(e).__name__}: {e}"
         finally:
