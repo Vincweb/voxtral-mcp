@@ -164,11 +164,12 @@ def _ensure_gen_thread() -> None:
         _gen_thread.start()
 
 
-def _drain_audio_q() -> int:
+def _drain(q: "queue.Queue[Any]") -> int:
+    """Drain all items from `q`, ignoring None sentinels. Returns count dropped."""
     dropped = 0
     while True:
         try:
-            x = _audio_q.get_nowait()
+            x = q.get_nowait()
         except queue.Empty:
             return dropped
         if x is None:
@@ -176,22 +177,28 @@ def _drain_audio_q() -> int:
         dropped += 1
 
 
-def _drain_gen_q() -> int:
-    dropped = 0
-    while True:
-        try:
-            x = _gen_q.get_nowait()
-        except queue.Empty:
-            return dropped
-        if x is None:
-            continue
-        dropped += 1
+def _abort_all() -> tuple[int, int]:
+    """Cancel in-flight generation, drain both queues, abort current playback.
+
+    Shared between `stop_speaking()` and `speak(interrupt=True)`.
+    Returns (audio_chunks_dropped, pending_requests_dropped).
+    """
+    _cancel_event.set()
+    dropped_gen = _drain(_gen_q)
+    dropped_audio = _drain(_audio_q)
+    with _stream_lock:
+        if _stream is not None and not _stream.closed:
+            try:
+                _stream.abort()
+            except Exception:  # noqa: BLE001
+                pass
+    return dropped_audio, dropped_gen
 
 
 def _cleanup() -> None:
     _cancel_event.set()
-    _drain_audio_q()
-    _drain_gen_q()
+    _drain(_audio_q)
+    _drain(_gen_q)
     _close_stream()
 
 
@@ -199,7 +206,7 @@ atexit.register(_cleanup)
 
 
 @mcp.tool()
-def speak(text: str, voice: str | None = None) -> str:
+def speak(text: str, voice: str | None = None, interrupt: bool = False) -> str:
     """Speak text aloud through Mistral Voxtral 4B TTS (local, Apple Silicon MLX).
 
     Returns immediately. The text is queued for streaming generation in a
@@ -208,25 +215,37 @@ def speak(text: str, voice: str | None = None) -> str:
     write mode — no PortAudio callback, so Python never runs in the audio
     realtime thread, and playback is gap-free and crackle-free.
 
-    First audio is audible in ~2-3 s even for long texts. Multiple speak()
-    calls queue and play sequentially.
+    First audio is audible in ~2-3 s even for long texts. By default,
+    multiple `speak()` calls queue and play sequentially — they never
+    overlap, and audio from a previous conversational turn keeps playing
+    through into the next.
 
-    Use `stop_speaking()` at the start of a new conversational turn to drop
-    any audio still playing/queued from the previous turn AND cancel any
-    in-flight generation.
+    Pass `interrupt=True` to abort whatever is currently playing/queued
+    before speaking. Use this when the user has clearly interrupted —
+    e.g. they said "wait", "non", "stop", or switched topic mid-playback.
+
+    For the explicit "shut up, don't speak at all" case (user said "mute"
+    or "silence"), call `stop_speaking()` instead and skip `speak()`.
 
     Args:
-        text: Text to read aloud. Supports French, English, German, Spanish,
-              Italian, Portuguese, Dutch, Hindi, Arabic.
+        text: Text to read aloud. Voxtral handles 9 languages: English,
+              French, German, Spanish, Italian, Portuguese, Dutch, Hindi,
+              Arabic. The voice preset implicitly encodes the language.
         voice: Optional voice preset name (e.g. "fr_male", "fr_female",
                "casual_male", "neutral_female"). Defaults to the model's
                built-in voice.
+        interrupt: If True, abort current playback and clear the queue
+                   before enqueuing this text. Use when the user has
+                   interrupted. Default False (queue normally).
     """
+    if interrupt:
+        _abort_all()
     _ensure_gen_thread()
     _gen_q.put((text, voice))
     return (
         f"enqueued {len(text)} chars (voice={voice or 'default'}, "
-        f"gen_pending={_gen_q.qsize()}, audio_buffer={_audio_q.qsize()})"
+        f"interrupt={interrupt}, gen_pending={_gen_q.qsize()}, "
+        f"audio_buffer={_audio_q.qsize()})"
     )
 
 
@@ -235,21 +254,11 @@ def stop_speaking() -> str:
     """Stop the currently-playing audio, drop pending audio chunks, AND
     cancel any in-flight generation.
 
-    Call this at the start of a new conversational turn so the previous
-    turn's audio doesn't bleed into the new one.
+    Use only when the user has explicitly asked to be quiet
+    ("mute" / "silence" / "tais-toi"). For mid-turn interruptions where
+    you still want to speak something new, prefer `speak(text, interrupt=True)`.
     """
-    _cancel_event.set()
-    dropped_gen = _drain_gen_q()
-    dropped_audio = _drain_audio_q()
-    # Discard PortAudio's internal buffer (sample data already handed off
-    # to the soundcard but not yet played). abort() requires a restart of
-    # the stream — _ensure_stream() will do that on the next speak().
-    with _stream_lock:
-        if _stream is not None and not _stream.closed:
-            try:
-                _stream.abort()
-            except Exception:  # noqa: BLE001
-                pass
+    dropped_audio, dropped_gen = _abort_all()
     return (
         f"cancelled generation, dropped {dropped_audio} audio chunks "
         f"+ {dropped_gen} pending requests, aborted current playback"

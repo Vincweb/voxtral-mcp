@@ -15,11 +15,24 @@ When this skill fires, call `mcp__voxtral__speak` with a brief confirmation in t
 
 For **every** subsequent turn, follow this pattern:
 
-1. **First, call `mcp__voxtral__stop_speaking()`** to drop any audio that may still be playing or queued from the previous turn. This prevents the user from hearing audio that no longer matches what's on screen.
-2. Compose your normal text response (markdown, code blocks, links — as usual).
-3. **Then** call `mcp__voxtral__speak(text=...)` once with a **spoken summary** of the response — short, natural, conversational. `speak()` is non-blocking — it returns as soon as the WAV is generated and lets audio play in the background.
+1. Compose your normal text response (markdown, code blocks, links — as usual).
+2. Call `mcp__voxtral__speak(text=...)` once with a **spoken summary** of the response — short, natural, conversational. `speak()` is non-blocking — it returns immediately and lets streaming generation feed audio into the background queue. Multiple turns' audio queue and play sequentially; you don't have to manage the queue yourself.
 
 The spoken summary is NOT the same as the text. It's what you'd say if reading the answer to someone in person. The text is what you'd write.
+
+### When to interrupt instead of queuing
+
+By default, audio from previous turns keeps playing through into the next — this is what you want most of the time (natural conversational flow, no choppy cuts). **Only when the user has clearly interrupted**, pass `interrupt=True` to abort current playback and clear the queue before this turn's speech:
+
+- The user said "non", "wait", "attends", "stop a sec" mid-playback
+- The user's message is unusually short / impatient and arrives suspiciously fast (likely cut you off)
+- The user has switched topic entirely — the previous turn's audio would be stale context
+
+```python
+mcp__voxtral__speak(text="...", interrupt=True)
+```
+
+If you're unsure, **don't interrupt** — let the previous audio finish. Over-interrupting cuts off the last syllable of every turn and feels jumpy.
 
 ## Rules for the spoken summary
 
@@ -28,27 +41,38 @@ The spoken summary is NOT the same as the text. It's what you'd say if reading t
 - **No code, file paths, URLs, or commands** in speech. Refer to them as "the code below", "the file I'm showing you", "the command in the answer".
 - **Skip silent turns** when the entire response is a code dump, a long diff, or a table: speak a one-line preview ("voilà le diff", "ça fait trois fichiers à modifier") and let the text carry the detail.
 - **No emojis** in the spoken text (TTS reads them literally).
-- **Match the user's language**: French → French, English → English. Voxtral handles 9 languages: English, French, German, Spanish, Dutch, Portuguese, Italian, Hindi, Arabic.
+- **Match the user's language**: Voxtral handles 9 languages (English, French, German, Spanish, Dutch, Portuguese, Italian, Hindi, Arabic) — pick a `voice` whose language matches what the user is writing.
 
 ## First-call latency
 
 The first `speak()` after a Claude Code restart blocks ~3–5 seconds while
 the Voxtral 4B MLX model loads into RAM (~2.5 GB). Subsequent calls only
 spend the generation time (typically 2–5 s for a 1–3 sentence summary on
-M-series).
+M-series), with first audio audible after ~2 s thanks to streaming.
 
 ## Voice selection
 
-Voxtral uses preset voices. The default is the model's built-in default; you can pass `voice="..."` to switch (e.g. `voice="casual_male"`). The list of available presets depends on the model variant — see [`mlx-community/Voxtral-4B-TTS-2603-mlx-4bit`](https://huggingface.co/mlx-community/Voxtral-4B-TTS-2603-mlx-4bit).
+Voxtral uses preset voices. The default is the model's built-in default; pass
+`voice="..."` to switch. Common picks:
 
-If the user asks for a specific voice, use that voice for the rest of the conversation until they change it.
+- French → `voice="fr_female"` or `voice="fr_male"`
+- English → `voice="casual_male"`, `voice="casual_female"`, `voice="neutral_female"`, …
+- Spanish → `voice="es_male"`, `voice="es_female"`
+- German → `voice="de_male"`, `voice="de_female"`
+- Italian → `voice="it_male"`, `voice="it_female"`
+- Portuguese → `voice="pt_male"`, `voice="pt_female"`
+- Dutch → `voice="nl_male"`, `voice="nl_female"`
+- Hindi → `voice="hi_male"`, `voice="hi_female"`
+- Arabic → `voice="ar_male"`
+
+If the user asks for a specific voice ("parle avec la voix cheerful"), use that voice for the rest of the conversation until they change it.
 
 ## Deactivation
 
-Stop calling `mcp__voxtral__speak` when the user says any of:
-- "mute" / "silence" / "stop talking" / "arrête de parler" / "désactive le mode vocal" / "/voice-mode off"
+When the user says any of "mute" / "silence" / "stop talking" / "arrête de parler" / "désactive le mode vocal" / "/voice-mode off":
 
-Confirm deactivation in text only ("voice mode off, je ne parle plus jusqu'à nouvel ordre").
+1. Call `mcp__voxtral__stop_speaking()` once to silence whatever is mid-playback.
+2. Stop calling `speak()` for the rest of the conversation. Confirm in text only: "voice mode off, je ne parle plus jusqu'à nouvel ordre".
 
 ## Anti-patterns — do not
 
@@ -57,23 +81,40 @@ Confirm deactivation in text only ("voice mode off, je ne parle plus jusqu'à no
 - ❌ Don't speak inline code spans verbatim (instead: "the function below" / "as shown").
 - ❌ Don't repeat the full response in audio — it's a summary, not a recitation.
 - ❌ Don't speak when the user explicitly typed something silent like a single command (`/status`, `/help`).
-- ❌ Don't forget to call `stop_speaking()` at the start of a turn — without it, an old turn's audio can overlap with the current one's text.
+- ❌ Don't call `stop_speaking()` or `speak(interrupt=True)` reflexively at every turn — it cuts off the last syllable of the previous turn and feels jumpy. Reserve interrupt for actual interruptions (see "When to interrupt").
+- ❌ Don't call both `stop_speaking()` and `speak()` in the same turn — `speak(interrupt=True)` does both atomically.
 
-## Quick example
+## Quick examples
 
-User: "qu'est-ce que tu penses de ce code ?"
+Each example shows the contrast: the **text** can have markdown, code,
+paths — the **speech** is the conversational gist a friend would say.
 
-Your response (text):
+### French
+
+User: "ce code marche pas, regarde"
+
+Text: a few lines explaining the bug, with the offending function name in backticks and a one-line fix in a code block.
+
+`speak()`:
+
 ```
-La logique est bonne, mais `validateUser` mélange auth et permissions.
-Je te propose de la splitter en deux fonctions :
-
-\`\`\`ts
-// before/after diff
-\`\`\`
+speak(
+  text="C'est un off-by-one dans la boucle, tu commences à un au lieu de zéro. Le fix est dans la réponse.",
+  voice="fr_female",
+)
 ```
 
-Your `speak()` call:
+### English
+
+User: "is this PR ready to merge?"
+
+Text: a checklist — tests passing, lint clean, one minor docstring nit, link to the failing snapshot.
+
+`speak()`:
+
 ```
-text="La logique est bonne, mais la fonction valide l'utilisateur mélange deux responsabilités. Je te propose de la séparer en deux. Tu veux que je le fasse ?"
+speak(
+  text="Almost — one snapshot's stale and there's a tiny docstring nit. Two minutes of work. Want me to fix them?",
+  voice="casual_male",
+)
 ```

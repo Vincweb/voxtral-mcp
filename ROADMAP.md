@@ -1,42 +1,32 @@
 # Roadmap — voxtral-mcp
 
-Current state: v0.4.2 published on GitHub. In-process model via mlx-audio,
-native streaming via `stream=True`, write-mode sounddevice (fixed the
-crackling). README and SKILL cleaned up; install order swapped to MCP-first.
-No PyPI, no Docker, not submitted to any directory yet.
+Current state: **v0.5.0 — ready for first PyPI release.** Repo split into
+`mcp/` (Python package, fully metadated for PyPI) and `plugin/` (Claude Code
+marketplace plugin). `.mcp.json` switched to `uvx voxtral-mcp`. GH Actions
+workflow publishes via OIDC Trusted Publishing on release creation — no
+long-lived token to manage. `install.sh` retired. `speak(interrupt=True)`
+replaces the always-`stop_speaking()`-first pattern; SKILL.md updated to
+match.
+
+Done since the previous iteration: repo restructure, `mcp/README.md`,
+PyPI metadata, OIDC release workflow, `speak(interrupt=)`, bump-version
+maintainer skill.
+
+Pending one-shot: **trigger the first PyPI publish.** Steps:
+
+1. Verify name is free on PyPI: `curl -sI https://pypi.org/pypi/voxtral-mcp/json` → 404.
+2. Create the `pypi` GH environment under repo settings → Environments
+   (so OIDC has somewhere to attach to). No secrets needed; OIDC handles auth.
+3. On [PyPI Trusted Publishers](https://pypi.org/manage/account/publishing/),
+   register the workflow: repo `Vincweb/voxtral-mcp`, workflow `publish.yml`,
+   env `pypi`.
+4. `gh release create v0.5.0 --generate-notes` → workflow fires.
+5. Smoke-test: `uvx voxtral-mcp --help` from a clean machine (or
+   `uv cache clean voxtral-mcp` first).
 
 ---
 
-## 1. Publish on PyPI
-
-**Why**: cleanest install UX — `uv tool install voxtral-mcp` everywhere.
-
-**Effort**: ~20 min.
-
-**Steps**:
-
-1. Create PyPI + TestPyPI accounts, generate API token.
-2. In `plugin/pyproject.toml`, add:
-   - `readme = "README.md"`
-   - `license = { text = "MIT" }`
-   - `authors = [{ name = "Vincent Caudron", email = "vincent@volume7.io" }]`
-   - `keywords = ["mcp", "tts", "voxtral", "mistral", "mlx", "claude", "voice"]`
-   - `classifiers = [...]` (Beta, MIT, OS macOS, Python 3.10-3.13, Audio)
-   - `[project.urls]` block (Homepage, Repository, Issues)
-3. Verify name is free: `curl -sI https://pypi.org/pypi/voxtral-mcp/json` returns 404.
-4. From `plugin/`: `uv build` then `uv publish --token "$PYPI_TOKEN"`.
-5. Test: `uv tool install voxtral-mcp` → `voxtral-mcp --help`.
-
-**Make sure to flag in the PyPI description** that this requires Apple
-Silicon — pip won't enforce that automatically.
-
-**Then**: update README to add the PyPI path. Heads-up to users that the
-Voxtral model itself is CC BY-NC 4.0 (non-commercial) — keep this prominent
-on the PyPI page too.
-
----
-
-## 2. Docker image — **probably skip for this repo**
+## 1. Docker image — **probably skip for this repo**
 
 **Why not**: voxtral-mcp depends on MLX. MLX requires Apple Silicon. Docker
 on macOS can't expose Apple Silicon GPU/Neural Engine to a container — so a
@@ -52,11 +42,11 @@ projects if they need a portable Voxtral runtime.
 
 ---
 
-## 3. Use mcp-submit to register on directories
+## 2. Use mcp-submit to register on directories
 
 **Why**: passive discoverability. Glama auto-indexes from GitHub (give it a
-week); the long tail (mcp.so, mcpservers.org, Smithery, PulseMCP) needs
-explicit submission. The OSS tool `mcp-submit` pushes to 10+ in one
+week post-PyPI); the long tail (mcp.so, mcpservers.org, Smithery, PulseMCP)
+needs explicit submission. The OSS tool `mcp-submit` pushes to 10+ in one
 command.
 
 **Effort**: ~15 min.
@@ -68,7 +58,7 @@ command.
 
 ---
 
-## 4. Make the repo more credible — minimum viable
+## 3. Make the repo more credible — minimum viable
 
 Without overdoing it. Order by ROI:
 
@@ -76,7 +66,7 @@ Without overdoing it. Order by ROI:
   5-second `casual_male.wav` (English). For Voxtral specifically the
   quality differential vs cheaper TTS is the whole pitch — make it
   audible immediately.
-- **Shields.io badges**: version, license (MIT), Python (3.10-3.13),
+- **Shields.io badges**: PyPI version, license (MIT), Python (3.10-3.13),
   platform (macOS only). The platform badge is important here — saves
   Linux users from cloning before realising it won't work.
 - **CHANGELOG.md** generated from git log. The streaming-debug saga
@@ -98,11 +88,11 @@ Skip for now:
 
 ## Priority order
 
-1. **PyPI publish** — unlocks the rest.
+1. **First PyPI publish** — workflow is in place, just needs the GH
+   release to fire.
 2. **Sample audio in README** — Voxtral's voice is the whole selling
    point; let people hear it without installing.
 3. **mcp-submit run**.
-4. **GH Actions OIDC release workflow** — once releases are routine.
 
 ---
 
@@ -112,8 +102,8 @@ Skip for now:
   generate. Should we document this more prominently? People with slow
   connections might think the install hung.
 - Worth adding voice-cloning examples to the README (export your own
-  voice with `pocket-tts export-voice`, then use it here)? Cross-uses
-  pocket-tts tooling, might confuse readers. Skip unless asked.
+  voice with `kyutai-tts-mcp extract-voice`, then use it here)? Cross-uses
+  kyutai-tts tooling, might confuse readers. Skip unless asked.
 - Should we offer a 6-bit and bf16 variant via env var? Already supported
   via `VOXTRAL_MODEL` — just document the trade-off table in the README
   (4-bit = fast, bf16 = best quality, 6-bit = middle).
