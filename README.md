@@ -153,7 +153,7 @@ intent.
 ## Architecture
 
 ```
-Claude Code  ──MCP stdio──▶  voxtral-mcp (Python, FastMCP)
+Claude Code  ──MCP stdio──▶  voxtral-mcp (Python, MCPServer)
                                   │
                                   │  speak(text)
                                   ▼

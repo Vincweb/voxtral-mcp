@@ -14,14 +14,14 @@ from typing import Any
 
 import numpy as np
 import sounddevice as sd
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 MODEL_ID = os.environ.get("VOXTRAL_MODEL", "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit")
 STREAMING_INTERVAL = float(os.environ.get("VOXTRAL_STREAMING_INTERVAL", "2.0"))
 MAX_TOKENS = int(os.environ.get("VOXTRAL_MAX_TOKENS", "4096"))
 SAMPLE_RATE = int(os.environ.get("VOXTRAL_SAMPLE_RATE", "24000"))
 
-mcp = FastMCP("voxtral")
+mcp = MCPServer("voxtral")
 
 _model: Any = None
 _model_lock = threading.Lock()
