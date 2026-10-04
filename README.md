@@ -13,8 +13,8 @@ at the cost of a larger model and slower TTFA.
 - Bundled `/voice-mode` skill — Claude speaks summaries of its answers automatically
 
 > 💡 Companion plugin: [**kyutai-tts-mcp**](https://github.com/Vincweb/kyutai-tts-mcp)
-> wraps Kyutai Pocket TTS (smaller voice quality but ~10× faster TTFA and a
-> third of the RAM, runs on Intel too, permissive licence). See the
+> wraps Kyutai Pocket TTS (smaller voice quality but ~50× faster TTFA and a
+> tenth of the RAM, permissive licence; French and English only). See the
 > [comparison table](#voxtral-mcp-vs-kyutai-tts-mcp) below — both plugins
 > share the same MCP API and `/voice-mode` skill.
 
@@ -237,17 +237,17 @@ sounddevice write-mode pipeline. They differ in the model they wrap:
 |   | **voxtral-mcp** | [**kyutai-tts-mcp**](https://github.com/Vincweb/kyutai-tts-mcp) |
 |---|---|---|
 | Model | Mistral Voxtral 4B | Kyutai Pocket TTS |
-| Parameters | 4 B | ~100 M (40× smaller) |
+| Parameters | 4 B | ~55 M est. (6 layers, int8) |
 | Voice quality | More natural prosody ⭐ | Synthetic but intelligible |
-| **TTFA** (post-load) | ~1 s | ~80–200 ms |
-| Generation speed | ~2.4× real-time | ~4–5× real-time |
-| Resident RAM | ~3 GB | ~1 GB |
-| Disk (model cache) | ~2.5 GB | ~1 GB |
-| Apple Silicon required | Yes (MLX-only) | No (works on Intel too) |
-| Languages | EN, FR, ES, DE, IT, PT, NL, HI, AR | EN, FR, ES, DE, IT, PT |
-| Voices | 20 presets (gender × language) | 6 built-in + voice cloning from `.wav` |
-| Model licence | CC BY-NC 4.0 (non-commercial) | Permissive (Kyutai) |
-| Architecture | In-process via mlx-audio | In-process via PyTorch |
+| **TTFA** (post-load) | ~1 s | ~20 ms |
+| Generation speed | ~2.4× real-time | ~9× real-time |
+| Resident RAM | ~3 GB | ~330 MB |
+| Disk (model cache) | ~2.5 GB | ~115 MB per language |
+| Apple Silicon required | Yes (MLX-only) | No (Intel: Python ≤ 3.13, untested) |
+| Languages | EN, FR, ES, DE, IT, PT, NL, HI, AR | EN, FR |
+| Voices | 20 presets (gender × language) | 26 Kyutai voices, usable in both languages (no voice cloning) |
+| Model licence | CC BY-NC 4.0 (non-commercial) | CC BY 4.0 (Kyutai) |
+| Architecture | In-process via mlx-audio | In-process via ONNX Runtime |
 
 **When to pick which:**
 
@@ -255,8 +255,8 @@ sounddevice write-mode pipeline. They differ in the model they wrap:
   is audible (≥ 30 s of speech), Apple Silicon hardware, personal use OK
   with non-commercial licence.
 - **kyutai-tts-mcp** for snappy short summaries (TTFA matters more than
-  prosody on 1–3 sentences), low RAM footprint, Intel Macs, multi-project
-  workflows, or any commercial use.
+  prosody on 1–3 sentences) in French or English, low RAM footprint, Intel
+  Macs, multi-project workflows, or any commercial use.
 
 You can install **both** plugins side-by-side — the MCP server names
 differ (`voxtral` vs `kyutai-tts`) so the tools won't collide. The shared
