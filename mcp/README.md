@@ -19,7 +19,7 @@ cost of a larger model and slower TTFA.
 
 - **macOS Apple Silicon** (M1/M2/M3/M4) — required, MLX doesn't run on Intel
 - **≥16 GB RAM** recommended (the 4-bit model keeps ~3 GB resident)
-- Python 3.10 – 3.13
+- Python 3.10 – 3.14
 
 ## Install
 

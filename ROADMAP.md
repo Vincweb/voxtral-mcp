@@ -66,7 +66,7 @@ Without overdoing it. Order by ROI:
   5-second `casual_male.wav` (English). For Voxtral specifically the
   quality differential vs cheaper TTS is the whole pitch — make it
   audible immediately.
-- **Shields.io badges**: PyPI version, license (MIT), Python (3.10-3.13),
+- **Shields.io badges**: PyPI version, license (MIT), Python (3.10-3.14),
   platform (macOS only). The platform badge is important here — saves
   Linux users from cloning before realising it won't work.
 - **CHANGELOG.md** generated from git log. The streaming-debug saga

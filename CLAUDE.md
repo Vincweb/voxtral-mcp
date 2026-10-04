@@ -55,7 +55,8 @@ touch generation.
   are unchanged. Never reintroduce a `FastMCP` import.
 - **Apple Silicon only.** mlx-audio is MLX-backed; there is no CPU or CUDA
   fallback. Don't add a `device` knob pretending otherwise.
-- **`requires-python = ">=3.10,<3.14"`**.
+- **`requires-python = ">=3.10,<3.15"`** — the ceiling tracks
+  `mistral-common` (`<3.15`) and the newest `mlx` wheel tag (`cp314`).
 - **The model licence is CC BY-NC 4.0** (non-commercial) — unlike this
   wrapper's MIT. Don't describe the whole thing as freely usable
   commercially.
