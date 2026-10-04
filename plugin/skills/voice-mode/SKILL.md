@@ -1,6 +1,6 @@
 ---
 name: voice-mode
-description: "Spoken responses via Mistral Voxtral 4B (local MLX, natural voice, ~3 GB RAM, ~2 s TTFA). Activate by saying \"parle-moi\", \"voice mode\", \"active le mode vocal\", \"réponds-moi à l'oral\", or invoking /voxtral:voice-mode."
+description: "Spoken responses via Mistral Voxtral 4B (local MLX, natural voice, ~3 GB RAM, ~1 s TTFA). Activate by saying \"parle-moi\", \"voice mode\", \"active le mode vocal\", \"réponds-moi à l'oral\", or invoking /voxtral:voice-mode."
 ---
 
 # Voice Mode — Mistral Voxtral
@@ -48,7 +48,7 @@ If you're unsure, **don't interrupt** — let the previous audio finish. Over-in
 The first `speak()` after a Claude Code restart blocks ~3–5 seconds while
 the Voxtral 4B MLX model loads into RAM (~2.5 GB). Subsequent calls only
 spend the generation time (typically 2–5 s for a 1–3 sentence summary on
-M-series), with first audio audible after ~2 s thanks to streaming.
+M-series), with first audio audible after ~1 s thanks to streaming.
 
 ## Voice selection
 

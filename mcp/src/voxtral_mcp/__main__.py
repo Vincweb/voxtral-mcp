@@ -1,7 +1,7 @@
 """MCP server wrapping Mistral Voxtral 4B TTS via mlx-audio.
 
 The model loads in-process on first speak() call (~3-5 s) and stays in RAM.
-Generation streams: chunks of ~2 s audio are produced by the model and
+Generation streams: chunks of ~1 s audio are produced by the model and
 fed into a sounddevice OutputStream in *write mode* (no PortAudio
 callback, so no GIL/real-time contention) — yielding clean, gap-free
 playback from the first sample.
@@ -17,7 +17,7 @@ import sounddevice as sd
 from mcp.server.mcpserver import MCPServer
 
 MODEL_ID = os.environ.get("VOXTRAL_MODEL", "mlx-community/Voxtral-4B-TTS-2603-mlx-4bit")
-STREAMING_INTERVAL = float(os.environ.get("VOXTRAL_STREAMING_INTERVAL", "2.0"))
+STREAMING_INTERVAL = float(os.environ.get("VOXTRAL_STREAMING_INTERVAL", "1.0"))
 MAX_TOKENS = int(os.environ.get("VOXTRAL_MAX_TOKENS", "4096"))
 SAMPLE_RATE = int(os.environ.get("VOXTRAL_SAMPLE_RATE", "24000"))
 
@@ -210,12 +210,12 @@ def speak(text: str, voice: str | None = None, interrupt: bool = False) -> str:
     """Speak text aloud through Mistral Voxtral 4B TTS (local, Apple Silicon MLX).
 
     Returns immediately. The text is queued for streaming generation in a
-    background thread, which emits chunks of ~2 s audio. A writer thread
+    background thread, which emits chunks of ~1 s audio. A writer thread
     feeds each chunk into a continuous sounddevice OutputStream in blocking
     write mode — no PortAudio callback, so Python never runs in the audio
     realtime thread, and playback is gap-free and crackle-free.
 
-    First audio is audible in ~2-3 s even for long texts. By default,
+    First audio is audible in ~1 s even for long texts. By default,
     multiple `speak()` calls queue and play sequentially — they never
     overlap, and audio from a previous conversational turn keeps playing
     through into the next.

@@ -8,7 +8,7 @@ at the cost of a larger model and slower TTFA.
 - 9 languages: 🇬🇧 English, 🇫🇷 French, 🇩🇪 German, 🇪🇸 Spanish, 🇮🇹 Italian, 🇵🇹 Portuguese, 🇳🇱 Dutch, 🇮🇳 Hindi, 🇸🇦 Arabic
 - 4 B parameters, 4-bit MLX quantization (~2.5 GB on disk)
 - ~2.4× real-time generation on Apple Silicon M-series
-- **TTFA ~2 s** thanks to native streaming via `mlx-audio` `stream=True`
+- **TTFA ~1 s** thanks to native streaming via `mlx-audio` `stream=True`
 - Non-blocking `speak()`, gap-free playback via `sounddevice` write-mode
 - Bundled `/voice-mode` skill — Claude speaks summaries of its answers automatically
 
@@ -107,7 +107,7 @@ Claude will:
 Stop with **"mute"**, **"silence"**, **"stop talking"**, **"arrête de parler"**.
 
 The first `speak()` after a Claude Code restart takes ~3–5 s (model load).
-Subsequent calls have **~2 s TTFA** thanks to native streaming — you hear the
+Subsequent calls have **~1 s TTFA** thanks to native streaming — you hear the
 start of long narrations almost immediately while the rest is still being
 generated.
 
@@ -126,7 +126,7 @@ All env vars (in the `env` block of `.mcp.json`):
 | Variable | Default | Notes |
 |---|---|---|
 | `VOXTRAL_MODEL` | `mlx-community/Voxtral-4B-TTS-2603-mlx-4bit` | Any Voxtral MLX model on HF (4-bit / 6-bit / bf16) |
-| `VOXTRAL_STREAMING_INTERVAL` | `2.0` | Approx. seconds of audio per streaming chunk |
+| `VOXTRAL_STREAMING_INTERVAL` | `1.0` | Approx. seconds of audio per streaming chunk |
 | `VOXTRAL_MAX_TOKENS` | `4096` | Generation cap (in audio tokens, not characters) |
 | `VOXTRAL_SAMPLE_RATE` | `24000` | Output sample rate |
 
@@ -161,7 +161,7 @@ Claude Code  ──MCP stdio──▶  voxtral-mcp (Python, MCPServer)
                                   │
                                   ▼
                        generation thread
-                            model.generate(stream=True, streaming_interval=2.0)
+                            model.generate(stream=True, streaming_interval=1.0)
                             yields mx.array chunks
                                   │
                                   ▼
@@ -183,8 +183,8 @@ Key design choices:
   `mlx_audio.tts.utils.load()`. No external daemon, no HTTP, no temp WAVs,
   no `afplay` subprocess.
 - **Native streaming**: chunks are produced incrementally via
-  `model.generate(stream=True, streaming_interval=2.0)` — first audible
-  audio in ~2 s regardless of total text length.
+  `model.generate(stream=True, streaming_interval=1.0)` — first audible
+  audio in ~1 s regardless of total text length.
 - **Write-mode sounddevice**: the OutputStream is opened WITHOUT a
   callback, so a Python writer thread calls `stream.write(chunk)` in
   blocking mode. PortAudio's internal buffer absorbs all timing variation
@@ -238,7 +238,7 @@ sounddevice write-mode pipeline. They differ in the model they wrap:
 | Model | Mistral Voxtral 4B | Kyutai Pocket TTS |
 | Parameters | 4 B | ~100 M (40× smaller) |
 | Voice quality | More natural prosody ⭐ | Synthetic but intelligible |
-| **TTFA** (post-load) | ~2 s | ~80–200 ms |
+| **TTFA** (post-load) | ~1 s | ~80–200 ms |
 | Generation speed | ~2.4× real-time | ~4–5× real-time |
 | Resident RAM | ~3 GB | ~1 GB |
 | Disk (model cache) | ~2.5 GB | ~1 GB |

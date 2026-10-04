@@ -83,9 +83,14 @@ gaps, deadlocks, or audio that won't stop:
 - The generation loop reads chunks defensively: `chunk.audio`, falling back
   to `chunk.samples`, skipping when both are absent. That's absorbing
   mlx-audio API drift across versions — keep the fallback when touching it.
-- `STREAMING_INTERVAL` (default 2.0 s) is the chunk size the model emits,
-  and therefore roughly the TTFA floor. Lowering it trades latency for more
-  frequent generate() turnarounds; it isn't free.
+- `STREAMING_INTERVAL` (default 1.0 s since 0.7.1, was 2.0) is the chunk
+  size the model emits, and therefore roughly the TTFA floor. Generation
+  runs only ~1.3× real-time (M3 Pro, mlx-audio 0.5.7), so the tightest
+  moment is right after the first chunk: the next one lands ~0.17 s before
+  the first runs out at 1.0, ~0.08 s at 0.5. Measured TTFA 1.7 / 0.9 /
+  0.6 s at 2.0 / 1.0 / 0.5, RTF unchanged, no underflows on that machine.
+  Don't go below 1.0 by default without counting underflows on a slower
+  Mac — `stream.write()` returns True when one happened.
 
 ## Versioning & releasing
 

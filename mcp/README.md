@@ -8,7 +8,7 @@ cost of a larger model and slower TTFA.
 - 9 languages: 🇬🇧 English, 🇫🇷 French, 🇩🇪 German, 🇪🇸 Spanish, 🇮🇹 Italian, 🇵🇹 Portuguese, 🇳🇱 Dutch, 🇮🇳 Hindi, 🇸🇦 Arabic
 - 4 B parameters, 4-bit MLX quantization (~2.5 GB on disk)
 - ~2.4× real-time generation on Apple Silicon M-series
-- **TTFA ~2 s** thanks to native streaming via `mlx-audio` `stream=True`
+- **TTFA ~1 s** thanks to native streaming via `mlx-audio` `stream=True`
 - Non-blocking `speak()`, gap-free playback via `sounddevice` write-mode
 - ~3 GB resident RAM once the model is loaded
 
@@ -61,7 +61,7 @@ All env vars (in the `env` block of `.mcp.json`):
 | Variable | Default | Notes |
 |---|---|---|
 | `VOXTRAL_MODEL` | `mlx-community/Voxtral-4B-TTS-2603-mlx-4bit` | Any Voxtral MLX model on HF (4-bit / 6-bit / bf16) |
-| `VOXTRAL_STREAMING_INTERVAL` | `2.0` | Approx. seconds of audio per streaming chunk |
+| `VOXTRAL_STREAMING_INTERVAL` | `1.0` | Approx. seconds of audio per streaming chunk |
 | `VOXTRAL_MAX_TOKENS` | `4096` | Generation cap (in audio tokens, not characters) |
 | `VOXTRAL_SAMPLE_RATE` | `24000` | Output sample rate |
 
