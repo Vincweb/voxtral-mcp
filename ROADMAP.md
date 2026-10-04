@@ -101,9 +101,6 @@ Skip for now:
 - The voxtral model artifact (~2.5 GB) downloads from HF on first
   generate. Should we document this more prominently? People with slow
   connections might think the install hung.
-- Worth adding voice-cloning examples to the README (export your own
-  voice with `kyutai-tts-mcp extract-voice`, then use it here)? Cross-uses
-  kyutai-tts tooling, might confuse readers. Skip unless asked.
 - Should we offer a 6-bit and bf16 variant via env var? Already supported
   via `VOXTRAL_MODEL` — just document the trade-off table in the README
   (4-bit = fast, bf16 = best quality, 6-bit = middle).

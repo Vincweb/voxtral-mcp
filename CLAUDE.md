@@ -140,15 +140,17 @@ expected, `uv lock --check` is the thing to confirm.
 ## Sibling project
 
 [kyutai-tts-mcp](https://github.com/Vincweb/kyutai-tts-mcp) is the same
-architecture around Kyutai Pocket TTS — smaller, faster TTFA, CPU-only,
-permissively licensed — with an intentionally identical MCP API and a
-shared `/voice-mode` skill. Differences that matter when porting a change:
+architecture around Kyutai Pocket TTS — smaller, faster TTFA, CPU-only on
+ONNX Runtime (no PyTorch since its 0.9), permissively licensed — with an
+intentionally identical MCP API and a shared `/voice-mode` skill.
+Differences that matter when porting a change:
 
-- Kyutai caches **one model per language** and takes `language=` on
-  `speak()`; here there's a single model and the language is implied by the
-  voice preset.
+- Kyutai caches **one model per language** (French and English only since
+  0.9) and takes `language=` on `speak()`; here there's a single model and
+  the language is implied by the voice preset.
 - Kyutai derives its sample rate from the model; here it's an env knob.
-- Kyutai has an `extract-voice` CLI subcommand (and hence argparse); this
-  repo has no CLI surface at all.
+- Kyutai has a `--language` flag (and hence argparse); this repo has no
+  CLI surface at all. Its `extract-voice` subcommand and voice cloning went
+  away with PyTorch in 0.9 — don't port anything that assumes them.
 
 API changes here usually want a matching change there, and vice versa.
