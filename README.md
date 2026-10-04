@@ -218,7 +218,8 @@ discover and wire it up (Option B).
 
 | Version | Highlights |
 |---|---|
-| **0.5.0** | **First PyPI release.** `uvx voxtral-mcp` / `uv tool install voxtral-mcp`. **`speak(interrupt=True)`** to abort current playback before speaking (replaces the always-`stop_speaking()`-first pattern — audio now queues across turns naturally). Repo split into `mcp/` (Python package) + `plugin/` (Claude Code wrapper); `install.sh` retired in favor of `uvx`. CI release workflow via OIDC Trusted Publishing. |
+| **0.7.0** | **Python 3.14 support.** Dependencies refreshed (mlx-audio 0.5, mlx 0.32, mcp 2.3); `mlx-audio` floor raised to 0.4.3, the first release with a working Voxtral TTS tokenizer contract. Release workflow on current GitHub Actions majors, Dependabot enabled. |
+| 0.5.0     | **First PyPI release.** `uvx voxtral-mcp` / `uv tool install voxtral-mcp`. **`speak(interrupt=True)`** to abort current playback before speaking (replaces the always-`stop_speaking()`-first pattern — audio now queues across turns naturally). Repo split into `mcp/` (Python package) + `plugin/` (Claude Code wrapper); `install.sh` retired in favor of `uvx`. CI release workflow via OIDC Trusted Publishing. |
 | 0.4.0     | **In-process model + native streaming + write-mode sounddevice.** Drops `afplay` and temp WAVs. Kills the initial crackle that plagued earlier versions. Python never runs in PortAudio's realtime thread, so no more GIL-induced buffer underruns. Mirrors the [kyutai-tts-mcp](https://github.com/Vincweb/kyutai-tts-mcp) v0.4.0 architecture. |
 | 0.3.2     | Bumped FADE_IN to 80 ms + trimmed first 30 ms of each generation to mask decoder warm-up (didn't fully solve it). |
 | 0.3.1     | Lazy stream open + 10 ms fade-in (insufficient). |
